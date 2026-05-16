@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>3D City Life - Dynamic Urban Simulation</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        canvas { display: block; }
+        
+        /* UI Overlay Panel */
+        .info-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(8px);
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            pointer-events: none;
+            z-index: 10;
+            border-left: 4px solid #ffaa44;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            font-weight: 500;
+        }
+        .info-panel h1 {
+            margin: 0 0 5px;
+            font-size: 18px;
+            letter-spacing: 1px;
+        }
+        .info-panel p {
+            margin: 0;
+            font-size: 12px;
+            opacity: 0.8;
+        }
+        .stats {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.6);
+            backdrop-filter: blur(4px);
+            padding: 8px 15px;
+            border-radius: 20px;
+            color: #ddd;
+            font-size: 12px;
+            font-family: monospace;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .controls-tip {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.5);
+            padding: 6px 12px;
+            border-radius: 8px;
+            color: #ccc;
+            font-size: 11px;
+            font-family: monospace;
+            pointer-events: none;
+            z-index: 10;
+        }
+        @media (max-width: 600px) {
+            .info-panel { font-size: 10px; top: 10px; left: 10px; padding: 8px 12px; }
+            .stats { font-size: 9px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="info-panel">
+        <h1>🏙️ 3D City Life</h1>
+        <p>Procedural City | AI Citizens with Jobs | Dynamic Simulation</p>
+    </div>
+    <div class="stats" id="stats">
+        🏢 Buildings: <span id="buildingCount">0</span> | 👥 Citizens: <span id="charCount">0</span>
+    </div>
+    <div class="controls-tip">
+        🖱️ Drag to rotate | Right-click to pan | Scroll to zoom
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.164.1/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.164.1/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+        // --- Setup Scene, Camera, Renderers ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0a1030); // Deep night-blue sky with gradient feel
+        scene.fog = new THREE.FogExp2(0x0a1030, 0.008); // Atmospheric fog
+        
+        // Camera: perspective for 3D
+        const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 200);
+        camera.position.set(22, 16, 24);
+        camera.lookAt(0, 0, 0);
+        
+        // WebGL Renderer
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true; // Enable shadows for depth
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Softer shadows
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.body.appendChild(renderer.domElement);
+        
+        // CSS2 Renderer for text labels (always facing camera)
+        const labelRenderer = new CSS2DRenderer();
+        labelRenderer.setSize(window.innerWidth, window.innerHeight);
+        labelRenderer.domElement.style.position = 'absolute';
+        labelRenderer.domElement.style.top = '0px';
+        labelRenderer.domElement.style.left = '0px';
+        labelRenderer.domElement.style.pointerEvents = 'none';
+        document.body.appendChild(labelRenderer.domElement);
+        
+        // --- Controls with better settings ---
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.06;
+        controls.rotateSpeed = 1.0;
+        controls.zoomSpeed = 1.2;
+        controls.panSpeed = 0.8;
+        controls.screenSpacePanning = true; // Avoid tilting
+        controls.maxPolarAngle = Math.PI / 2.3; // Slight restriction to avoid seeing under ground
+        controls.minDistance = 5;
+        controls.maxDistance = 45;
+        
+        // --- Enhanced Lighting System ---
+        // Ambient light for base illumination
+        const ambientLight = new THREE.AmbientLight(0x404060, 0.65);
+        scene.add(ambientLight);
+        
+        // Main directional light (sun)
+        const sunLight = new THREE.DirectionalLight(0xfff5e0, 1.2);
+        sunLight.position.set(12, 20, 5);
+        sunLight.castShadow = true;
+        sunLight.receiveShadow = false;
+        sunLight.shadow.mapSize.width = 2048;
+        sunLight.shadow.mapSize.height = 2048;
+        sunLight.shadow.camera.near = 0.5;
+        sunLight.shadow.camera.far = 45;
+        sunLight.shadow.camera.left = -12;
+        sunLight.shadow.camera.right = 12;
+        sunLight.shadow.camera.top = 12;
+        sunLight.shadow.camera.bottom = -12;
+        scene.add(sunLight);
+        
+        // Fill light from below and back
+        const fillLight = new THREE.PointLight(0x5577aa, 0.4);
+        fillLight.position.set(0, -2, 0);
+        scene.add(fillLight);
+        
+        // Warm rim light for character highlights
+        const rimLight = new THREE.PointLight(0xffaa66, 0.5);
+        rimLight.position.set(-5, 5, 8);
+        scene.add(rimLight);
+        
+        // Optional: subtle blue fill from sky
+        const skyFill = new THREE.PointLight(0x88aaff, 0.3);
+        skyFill.position.set(0, 10, 0);
+        scene.add(skyFill);
+        
+        // --- Ground with subtle texture & grid helper for reference ---
+        const groundGeometry = new THREE.CircleGeometry(45, 32);
+        const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x2c5e2a, roughness: 0.8, metalness: 0.1 });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = -0.05;
+        ground.receiveShadow = true;
+        scene.add(ground);
+        
+        // Grid helper for urban planning look
+        const gridHelper = new THREE.GridHelper(90, 30, 0x88aa88, 0x446644);
+        gridHelper.position.y = -0.02;
+        gridHelper.material.transparent = true;
+        gridHelper.material.opacity = 0.35;
+        scene.add(gridHelper);
+        
+        // Decorative road lines (simple circles)
+        const roadRingMat = new THREE.LineBasicMaterial({ color: 0xc9b6a0 });
+        for (let r = 12; r <= 38; r += 8) {
+            const ringPoints = [];
+            const segments = 64;
+            for (let i = 0; i <= segments; i++) {
+                const angle = (i / segments) * Math.PI * 2;
+                const x = Math.cos(angle) * r;
+                const z = Math.sin(angle) * r;
+                ringPoints.push(new THREE.Vector3(x, 0.01, z));
+            }
+            const ringGeo = new THREE.BufferGeometry().setFromPoints(ringPoints);
+            const ringLine = new THREE.LineLoop(ringGeo, roadRingMat);
+            scene.add(ringLine);
+        }
+        
+        // Buildings removed as requested
+        const buildings = [];
+        const buildingPositions = [];
+        
+        // Central Park element: a small fountain / monument
+        const fountainBase = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 2.0, 0.5, 16), new THREE.MeshStandardMaterial({ color: 0xccaa88, metalness: 0.6 }));
+        fountainBase.position.set(0, 0.25, 0);
+        fountainBase.castShadow = true;
+        scene.add(fountainBase);
+        
+        const fountainWater = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 0.15, 24), new THREE.MeshStandardMaterial({ color: 0x3399ff, emissive: 0x004466, emissiveIntensity: 0.3 }));
+        fountainWater.position.set(0, 0.55, 0);
+        fountainWater.castShadow = true;
+        scene.add(fountainWater);
+        
+        const statue = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.2, 8), new THREE.MeshStandardMaterial({ color: 0xcdb38c }));
+        statue.position.set(0, 1.1, 0);
+        statue.castShadow = true;
+        scene.add(statue);
+        
+        // --- Characters with Jobs, CSS2D Labels, Improved AI ---
+        const characterJobs = [
+            { name: "👷 Worker", color: 0xFFA559, speed: 0.045, icon: "🔨", desc: "Commuting" },
+            { name: "🎓 Student", color: 0x5A9EFF, speed: 0.065, icon: "📚", desc: "Exploring" },
+            { name: "📸 Tourist", color: 0xE86FCF, speed: 0.038, icon: "📷", desc: "Sightseeing" },
+            { name: "🛒 Shopkeeper", color: 0x5CAC5C, speed: 0.042, icon: "🏪", desc: "Working" },
+            { name: "👩‍💻 Artist", color: 0xD98C5F, speed: 0.05, icon: "🎨", desc: "Creative" },
+            { name: "🏃 Jogger", color: 0xF4C542, speed: 0.072, icon: "🏃", desc: "Running" }
+        ];
+        
+        class CityCharacter {
+            constructor(job, startPos) {
+                this.job = job;
+                this.mesh = this.createModel(job.color);
+                this.mesh.position.copy(startPos);
+                this.mesh.castShadow = true;
+                this.mesh.receiveShadow = false;
+                scene.add(this.mesh);
+                
+                // CSS2D Label
+                const div = document.createElement('div');
+                div.textContent = `${job.icon} ${job.name}`;
+                div.style.color = '#fff';
+                div.style.fontSize = '12px';
+                div.style.fontWeight = 'bold';
+                div.style.textShadow = '1px 1px 0px black';
+                div.style.background = 'rgba(0,0,0,0.6)';
+                div.style.padding = '2px 8px';
+                div.style.borderRadius = '20px';
+                div.style.borderLeft = `3px solid ${new THREE.Color(job.color).getStyle()}`;
+                div.style.fontFamily = 'sans-serif';
+                div.style.backdropFilter = 'blur(4px)';
+                div.style.whiteSpace = 'nowrap';
+                this.label = new CSS2DObject(div);
+                this.label.position.copy(this.mesh.position);
+                this.label.position.y += 1.2;
+                scene.add(this.label);
+                
+                this.target = new THREE.Vector3();
+                this.velocity = new THREE.Vector3();
+                this.speed = job.speed;
+                this.randomizeTarget();
+            }
+            
+            createModel(colorHex) {
+                const group = new THREE.Group();
+                // Body (capsule style using cylinder + sphere)
+                const bodyGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.85, 8);
+                const material = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.4, metalness: 0.1 });
+                const body = new THREE.Mesh(bodyGeo, material);
+                body.position.y = 0.45;
+                body.castShadow = true;
+                group.add(body);
+                
+                // Head
+                const headMat = new THREE.MeshStandardMaterial({ color: 0xffccaa, roughness: 0.2 });
+                const head = new THREE.Mesh(new THREE.SphereGeometry(0.32, 16, 16), headMat);
+                head.position.y = 0.9;
+                head.castShadow = true;
+                group.add(head);
+                
+                // Eyes for character (tiny spheres)
+                const eyeMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+                const leftEye = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 16), eyeMat);
+                leftEye.position.set(-0.13, 1.0, 0.32);
+                leftEye.castShadow = false;
+                group.add(leftEye);
+                const rightEye = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 16), eyeMat);
+                rightEye.position.set(0.13, 1.0, 0.32);
+                rightEye.castShadow = false;
+                group.add(rightEye);
+                
+                const pupilMat = new THREE.MeshStandardMaterial({ color: 0x000000 });
+                const leftPupil = new THREE.Mesh(new THREE.SphereGeometry(0.05, 12, 12), pupilMat);
+                leftPupil.position.set(-0.13, 0.98, 0.4);
+                group.add(leftPupil);
+                const rightPupil = new THREE.Mesh(new THREE.SphereGeometry(0.05, 12, 12), pupilMat);
+                rightPupil.position.set(0.13, 0.98, 0.4);
+                group.add(rightPupil);
+                
+                return group;
+            }
+            
+            randomizeTarget() {
+                // Aim for interesting areas: avoid buildings? but simpler: random point within boundaries
+                const angle = Math.random() * Math.PI * 2;
+                const radius = 8 + Math.random() * 30;
+                const x = Math.cos(angle) * radius;
+                const z = Math.sin(angle) * radius;
+                this.target.set(x, 0, z);
+            }
+            
+            update() {
+                // Move towards target
+                const direction = new THREE.Vector3().subVectors(this.target, this.mesh.position);
+                const distance = direction.length();
+                if (distance < 0.6) {
+                    this.randomizeTarget();
+                } else {
+                    direction.normalize();
+                    this.mesh.position.x += direction.x * this.speed;
+                    this.mesh.position.z += direction.z * this.speed;
+                    // boundary limit (city radius)
+                    const limit = 42;
+                    if (Math.abs(this.mesh.position.x) > limit) this.mesh.position.x = Math.sign(this.mesh.position.x) * limit;
+                    if (Math.abs(this.mesh.position.z) > limit) this.mesh.position.z = Math.sign(this.mesh.position.z) * limit;
+                }
+                
+                // Rotation to face movement direction
+                const velDir = new THREE.Vector3().subVectors(this.target, this.mesh.position);
+                if (velDir.length() > 0.01) {
+                    const angle = Math.atan2(velDir.x, velDir.z);
+                    this.mesh.rotation.y = angle;
+                }
+                
+                // Simple idle bounce (head bobbing slightly)
+                const time = Date.now() * 0.008;
+                this.mesh.position.y = 0 + Math.sin(time) * 0.01;
+                
+                // Update label position
+                this.label.position.copy(this.mesh.position);
+                this.label.position.y += 1.15;
+            }
+        }
+        
+        const characters = [];
+        const characterCount = 24;
+        for (let i = 0; i < characterCount; i++) {
+            const job = characterJobs[Math.floor(Math.random() * characterJobs.length)];
+            const startX = (Math.random() - 0.5) * 35;
+            const startZ = (Math.random() - 0.5) * 35;
+            const char = new CityCharacter(job, new THREE.Vector3(startX, 0, startZ));
+            characters.push(char);
+        }
+        
+        // Add some trees / foliage for park-like feel (simple cylinders)
+        const trunkMat = new THREE.MeshStandardMaterial({ color: 0x8B5A2B });
+        const foliageMat = new THREE.MeshStandardMaterial({ color: 0x5A9E4E });
+        for (let i = 0; i < 120; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const rad = 10 + Math.random() * 32;
+            const x = Math.cos(angle) * rad;
+            const z = Math.sin(angle) * rad;
+            if (Math.abs(x) < 5 && Math.abs(z) < 5) continue;
+            const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.35, 0.8, 5), trunkMat);
+            trunk.position.set(x, 0.4, z);
+            trunk.castShadow = true;
+            const foliage = new THREE.Mesh(new THREE.ConeGeometry(0.55, 0.9, 6), foliageMat);
+            foliage.position.set(x, 0.95, z);
+            foliage.castShadow = true;
+            scene.add(trunk);
+            scene.add(foliage);
+        }
+        
+        // --- Floating Particles (City ambiance) ---
+        const particleCount = 400;
+        const particleGeometry = new THREE.BufferGeometry();
+        const particlePositions = new Float32Array(particleCount * 3);
+        for (let i = 0; i < particleCount; i++) {
+            particlePositions[i*3] = (Math.random() - 0.5) * 85;
+            particlePositions[i*3+1] = Math.random() * 15;
+            particlePositions[i*3+2] = (Math.random() - 0.5) * 85;
+        }
+        particleGeometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+        const particleMaterial = new THREE.PointsMaterial({ color: 0xaaccff, size: 0.08, transparent: true, opacity: 0.5 });
+        const particles = new THREE.Points(particleGeometry, particleMaterial);
+        scene.add(particles);
+        
+        // Simple floating dust animation
+        function animateParticles() {
+            particles.rotation.y += 0.002;
+            requestAnimationFrame(animateParticles);
+        }
+        animateParticles();
+        
+        // --- Additional lighting: lamp posts effect? not necessary, but add a glowing point in center ---
+        const centerGlow = new THREE.PointLight(0xffaa66, 0.5, 20);
+        centerGlow.position.set(0, 1.2, 0);
+        scene.add(centerGlow);
+        
+        // Update stats display
+        document.getElementById('buildingCount').innerText = buildingPositions.length;
+        document.getElementById('charCount').innerText = characters.length;
+        
+        // --- Simple Rain / Weather? Not needed, but adds dynamic day cycle simulation? skip for performance---
+        
+        // --- Animation Loop ---
+        let lastTimestamp = 0;
+        function animate(time) {
+            requestAnimationFrame(animate);
+            const delta = Math.min(1/30, (time - lastTimestamp) / 1000);
+            lastTimestamp = time;
+            
+            // Update characters
+            characters.forEach(character => {
+                character.update();
+            });
+            
+            // Gentle pulsating rim light
+            const intensity = 0.5 + Math.sin(Date.now() * 0.002) * 0.15;
+            rimLight.intensity = intensity;
+            
+            // Rotate particles for gentle motion
+            particles.rotation.y += 0.001;
+            
+            // Update controls & render
+            controls.update(); // for damping
+            renderer.render(scene, camera);
+            labelRenderer.render(scene, camera);
+        }
+        
+        requestAnimationFrame(animate);
+        
+        // --- Window resize handler ---
+        window.addEventListener('resize', onWindowResize, false);
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            labelRenderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        // Small console greeting
+        console.log('3D City Life started! Population: ' + characters.length + ', Buildings: ' + buildingPositions.length);
+        
+        // Add a few floating birds? (optional simple crosses) - just for fun
+        const birdMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+        for (let i = 0; i < 12; i++) {
+            const bird = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.25, 3), birdMat);
+            bird.position.set((Math.random() - 0.5) * 60, 5 + Math.random() * 8, (Math.random() - 0.5) * 60);
+            bird.castShadow = false;
+            scene.add(bird);
+            // simple animation loop for birds in main animate is heavy, skip but they just sit.
+        }
+    </script>
+</body>
+</html>
